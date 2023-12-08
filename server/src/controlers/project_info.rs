@@ -5,13 +5,16 @@ use actix_web::{
 };
 use serde_json::json;
 
-use crate::{
-    app_data::AppData,
-    models::project_info::{
-        create_project_info, get_all_project_infos, ProjectCreationInfo, ProjectInfo,
-    },
-    utility::jwt_token::Claims,
-};
+use crate::{app_data::AppData, models::project_info::*, utility::jwt_token::generate_token};
+
+pub fn project_pre_auth(config: &mut web::ServiceConfig) {
+    let scope = web::scope("")
+        .service(get_all_project_info)
+        .service(create_project)
+        .service(login_project);
+
+    config.service(scope);
+}
 
 #[get("/")]
 pub async fn get_all_project_info(data: web::Data<AppData>) -> impl Responder {
@@ -29,7 +32,7 @@ pub async fn get_all_project_info(data: web::Data<AppData>) -> impl Responder {
 #[post("/create")]
 pub async fn create_project(
     data: web::Data<AppData>,
-    new_project: web::Json<ProjectCreationInfo>,
+    new_project: web::Json<ProjectLoginInfo>,
 ) -> impl Responder {
     let project = create_project_info(&data.data_path, &new_project).await;
 
@@ -38,6 +41,29 @@ pub async fn create_project(
         Err(err) => {
             println!("{:#?}", err);
             HttpResponse::InternalServerError().into()
+        }
+    }
+}
+
+#[post("/login")]
+pub async fn login_project(
+    data: web::Data<AppData>,
+    project_info: web::Json<ProjectLoginInfo>,
+) -> impl Responder {
+    let project = project_login(&data.data_path, &project_info).await;
+
+    match project {
+        Ok(project) => HttpResponse::Ok().body(generate_token(&project)),
+        Err(err) => {
+            println!("{:#?}", err);
+            match err {
+                ProjectInfoErrors::ProjectDosentExist => HttpResponse::NotFound().into(),
+                ProjectInfoErrors::WrongPassword => HttpResponse::Unauthorized().into(),
+                _ => {
+                    // should never reach here
+                    HttpResponse::InternalServerError().into()
+                }
+            }
         }
     }
 }

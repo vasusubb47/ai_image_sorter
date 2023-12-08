@@ -5,6 +5,7 @@ use dotenv::dotenv;
 // use sqlx::{self, Pool, Postgres};
 use std::env::var;
 
+use crate::controlers::image_data::*;
 use crate::controlers::project_info::*;
 use crate::middlewares::auth::jwt_validator;
 
@@ -44,17 +45,17 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(app_data_var.clone()))
             // .service(web::scope("/api").service(index))
             .service(
-                web::scope("/api/auth")
-                    .service(create_project)
-                    .service(get_all_project_info),
+                web::scope("/api/auth").configure(project_pre_auth),
                 // .service(user_login)
                 // .service(register_user),
             )
             .service(
-                web::scope("/api").wrap(bearer_middleware), // .service(get_all_project_info),
-                                                            // .configure(user_info_config)
-                                                            // .configure(user_file_config)
-                                                            // .configure(bucket_config),
+                web::scope("/api")
+                    .wrap(bearer_middleware)
+                    .service(save_image),
+                // .configure(user_info_config)
+                // .configure(user_file_config)
+                // .configure(bucket_config),
             )
             .wrap(Logger::default())
     })

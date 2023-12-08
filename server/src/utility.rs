@@ -1,9 +1,7 @@
 use rand::{distributions::Alphanumeric, Rng};
-use std::fmt::Debug;
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
 
+pub mod file_utilities;
 pub mod jwt_token;
 
 pub fn genarate_salt(salt_len: usize) -> String {
@@ -14,30 +12,29 @@ pub fn genarate_salt(salt_len: usize) -> String {
         .collect()
 }
 
-pub fn get_file_type(file_path: &str) -> String {
-    let path = PathBuf::from(file_path);
-    let ext = path.extension().unwrap();
-    ext.to_str().unwrap().to_owned()
+pub fn hash_password(password: &str) -> String {
+    let mut sha = Sha256::new();
+    let salt = genarate_salt(64);
+
+    sha.update(password.to_owned() + &salt.to_owned());
+    let passcode_hash = sha.finalize();
+
+    let passcode_hash = format!("{:X}", passcode_hash) + ":" + &salt;
+    passcode_hash
 }
 
-pub fn create_file_write_all(file_path: &Path, content: &[u8]) {
-    let mut file = fs::File::create(file_path).unwrap();
-    file.write_all(content).unwrap();
-}
+pub fn verify_password(password: &str, passcode_hash: &str) -> bool {
+    let passcode_parts = passcode_hash.split(':').collect::<Vec<&str>>();
+    let passcode_hash = passcode_parts[0];
+    let passcode_salt = passcode_parts[1];
 
-pub fn get_vec_to_sql_str<T>(vec_data: &Vec<T>) -> String
-where
-    T: Debug,
-{
-    let mut vec_data_str = Vec::<String>::new();
+    let mut sha = Sha256::new();
+    sha.update(password.to_owned() + passcode_salt);
+    let user_passcode_hash = sha.finalize();
 
-    for ele in vec_data {
-        vec_data_str.push(format!("'{:?}'", ele));
-    }
+    let user_passcode_hash = format!("{:X}", user_passcode_hash);
 
-    let sql_vec_str = vec_data_str.join(",");
-
-    format!("({})", sql_vec_str)
+    passcode_hash == user_passcode_hash
 }
 
 // pub fn get_current_working_dir() -> std::io::Result<PathBuf> {
