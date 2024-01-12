@@ -1,49 +1,64 @@
 use ::serde::{Deserialize, Serialize};
-use actix_multipart::form::{tempfile::TempFile, text::Text, MultipartForm};
 use chrono::{NaiveDateTime, Utc};
+use futures_util::Stream;
 use image::{open as openImage, GenericImage, GenericImageView, ImageBuffer};
 use std::io::Read;
 use std::{fs::File, path::PathBuf};
 use uuid::Uuid;
 
-use crate::utility::file_utilities::{
-    create_file_write_all, get_file_type_from_mime, object_to_byte_vec,
-};
+use crate::controlers::image_data;
+use crate::utility::encryption::{decrypt_bytes, encrypt_bytes};
+use crate::utility::file_utilities::{create_file_write_all, object_to_byte_vec, op_osstr_to_str};
 use crate::utility::genarate_salt;
 
-use super::project_info::ProjectInfo;
+use super::project_info::{self, ProjectInfo};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImageData {
     pub image_id: Uuid,
     pub image_name: String,
+    pub mime: String,
     pub original_image_name: String,
-    pub image_size: u32,
+    pub image_size: u64,
     pub created_date: NaiveDateTime,
     pub is_encrypted: bool,
     pub tags: Vec<String>,
 }
 
-#[derive(MultipartForm, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReqImageData {
+    pub image_id: Uuid,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResponseImageData {
+    pub data: Vec<u8>,
+    pub metadata: ImageData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadImage {
-    pub image: TempFile,
-    pub image_name: Option<Text<String>>,
-    pub image_tags: Text<String>,
+    pub image_path: String,
+    pub image_name: Option<String>,
+    pub image_tags: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TempImage {
     pub temp_file_path: String,
-    pub temp_file_size: u32,
+    pub temp_file_size: u64,
     pub temp_image_name: String,
     pub temp_image_mime: String,
     pub image_name: String,
     pub image_tags: Vec<String>,
 }
 
+#[derive(Debug)]
 pub enum ImageDataError {
     ProjectDosentExists,
     FailedToSaveImage,
+    ImageNotFound,
+    DecryptionError(String),
 }
 
 impl ImageData {
@@ -51,6 +66,7 @@ impl ImageData {
         ImageData {
             image_id: Uuid::new_v4(),
             image_name: temp_image.image_name,
+            mime: temp_image.temp_image_mime.to_owned(),
             original_image_name: temp_image.temp_image_name,
             image_size: temp_image.temp_file_size,
             created_date: Utc::now().naive_utc(),
@@ -65,18 +81,19 @@ impl ImageData {
 }
 
 impl TempImage {
-    fn from_upload_image(upload_image: UploadImage) -> Self {
+    fn from_upload_image(upload_image: UploadImage, input_path: &str) -> Self {
+        let binding = PathBuf::from(format!("{}//{}", input_path, upload_image.image_path));
+        let temp_img_path = binding.as_path();
+        let temp_img_metadata = temp_img_path.metadata().unwrap();
+
         TempImage {
-            temp_file_path: upload_image.image.file.path().to_str().unwrap().to_owned(),
-            temp_file_size: upload_image.image.size as u32,
-            temp_image_name: upload_image.image.file_name.unwrap(),
-            temp_image_mime: get_file_type_from_mime(
-                &upload_image.image.content_type.unwrap().to_string(),
-            ),
-            image_name: upload_image.image_name.unwrap_or(Text(genarate_salt(7))).0,
+            temp_file_path: temp_img_path.to_str().unwrap().to_owned(),
+            temp_file_size: temp_img_metadata.len(),
+            temp_image_name: op_osstr_to_str(temp_img_path.file_name()),
+            temp_image_mime: op_osstr_to_str(temp_img_path.extension()),
+            image_name: upload_image.image_name.unwrap_or(genarate_salt(7)),
             image_tags: upload_image
                 .image_tags
-                .0
                 .split(';')
                 .collect::<Vec<&str>>()
                 .iter()
@@ -88,6 +105,7 @@ impl TempImage {
 
 pub async fn upload_image(
     data_path: &str,
+    image_path: &str,
     temp_img: UploadImage,
     project_id: Uuid,
 ) -> Result<(), ImageDataError> {
@@ -96,30 +114,27 @@ pub async fn upload_image(
     if images.is_err() {
         return Err(images.err().unwrap());
     }
-    let mut images = images.ok().unwrap();
+    let mut images = images?;
 
-    let project_info = read_project_info(data_path, &project_id).await;
+    let project_info = get_project_info(data_path, &project_id).await;
     if project_info.is_err() {
         return Err(project_info.err().unwrap());
     }
-    let project_info = project_info.ok().unwrap();
+    let project_info = project_info?;
 
-    let temp_img = TempImage::from_upload_image(temp_img);
-    let mime = temp_img.temp_image_mime.to_owned();
+    let temp_img = TempImage::from_upload_image(temp_img, image_path);
     let temp_path = temp_img.temp_file_path.to_owned();
     println!("{:#?}", temp_img);
     let img_data = ImageData::new(temp_img, true);
     println!("{:#?}", img_data);
 
-    let image_path = PathBuf::from(
-        data_path.to_owned()
-            + "\\"
-            + &project_id.to_string()
-            + "\\"
-            + &img_data.image_name
-            + "."
-            + &mime,
-    );
+    let image_path = PathBuf::from(format!(
+        "{}\\{}\\{}.{}",
+        data_path,
+        project_id.to_string(),
+        img_data.image_name,
+        img_data.mime
+    ));
 
     match image_path.exists() {
         true => Err(ImageDataError::FailedToSaveImage),
@@ -127,7 +142,7 @@ pub async fn upload_image(
             println!("{:#?}", image_path);
 
             let enc_key = if img_data.is_encrypted {
-                Some(project_info.password_hash.split(':').collect::<Vec<&str>>()[1].to_owned())
+                Some(get_encryption_key(&project_info))
             } else {
                 None
             };
@@ -142,6 +157,91 @@ pub async fn upload_image(
             Ok(())
         }
     }
+}
+
+pub async fn get_saved_image(
+    data_path: &str,
+    project_id: &Uuid,
+    image_id: &Uuid,
+) -> Result<ResponseImageData, ImageDataError> {
+    let image_data = get_project_image(data_path, project_id, image_id).await;
+
+    if image_data.is_err() {
+        return Err(image_data.err().unwrap());
+    }
+    let image_data = image_data?;
+
+    let project_info = get_project_info(data_path, project_id).await;
+
+    let mut res_img = ResponseImageData {
+        data: Vec::new(),
+        metadata: image_data.clone(),
+    };
+
+    if project_info.is_err() {
+        return Err(project_info.err().unwrap());
+    }
+
+    let project_info = project_info?;
+
+    let image_path = format!(
+        "{}{}\\{}.{}",
+        data_path, project_info.project_id, image_data.image_name, image_data.mime
+    );
+    println!("image path : {}", image_path);
+    let mut file = File::open(image_path).unwrap();
+    let mut buffer: Vec<u8> = Vec::new();
+    let err = file.read_to_end(&mut buffer);
+    println!("{:#?}", err);
+
+    if err.is_err() {
+        return Err(ImageDataError::DecryptionError(err.unwrap().to_string()));
+    }
+
+    match image_data.is_encrypted {
+        false => {
+            res_img.data = buffer;
+        }
+        true => {
+            // println!("buffer data : {}", buffer);
+
+            let dec_bytes = decrypt_bytes(
+                std::str::from_utf8(&buffer).unwrap(),
+                &get_encryption_key(&project_info),
+            );
+
+            if dec_bytes.is_err() {
+                return Err(ImageDataError::DecryptionError(
+                    dec_bytes.unwrap_err().to_string(),
+                ));
+            }
+            res_img.data = dec_bytes.ok().unwrap();
+        }
+    }
+
+    Ok(res_img)
+}
+
+async fn get_project_image(
+    data_path: &str,
+    project_id: &Uuid,
+    image_id: &Uuid,
+) -> Result<ImageData, ImageDataError> {
+    let project_images = read_project_images(data_path, project_id).await;
+
+    if project_images.is_err() {
+        return Err(project_images.err().unwrap());
+    }
+
+    let project_imges = project_images?;
+
+    for image_data in project_imges.iter() {
+        if image_data.image_id == *image_id {
+            return Ok(image_data.clone());
+        }
+    }
+
+    Err(ImageDataError::ImageNotFound)
 }
 
 async fn read_project_images(
@@ -163,7 +263,7 @@ async fn read_project_images(
     Ok(images)
 }
 
-async fn read_project_info(
+async fn get_project_info(
     data_path: &str,
     project_id: &Uuid,
 ) -> Result<ProjectInfo, ImageDataError> {
@@ -181,8 +281,22 @@ async fn read_project_info(
     Ok(project_info)
 }
 
-async fn save_temp_image(temp_path: String, image_path: String, _encryption_key: Option<String>) {
+async fn save_temp_image(temp_path: String, image_path: String, encryption_key: Option<String>) {
     let temp_img = openImage(temp_path).unwrap().into_rgb8();
-    let _ = temp_img.save(image_path.to_owned());
+
+    match encryption_key {
+        Some(encryption_key) => {
+            let encrypted_image = encrypt_bytes(temp_img.into_vec(), &encryption_key);
+            create_file_write_all(&PathBuf::from(&image_path), &encrypted_image);
+        }
+        None => {
+            let _ = temp_img.save(image_path.to_owned());
+        }
+    }
+
     println!("saved image to {}", image_path);
+}
+
+fn get_encryption_key(project_info: &ProjectInfo) -> String {
+    project_info.password_hash.split(':').collect::<Vec<&str>>()[1].to_owned()
 }

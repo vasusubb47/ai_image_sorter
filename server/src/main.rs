@@ -28,6 +28,8 @@ async fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let data_path = var("DATA_PATH").expect("Couldn't find DATA_PATH from environment variable.");
+    let input_path =
+        var("INPUT_PATH").expect("Couldn't find INPUT_PATH from environment variable.");
 
     let port = var("PORT")
         .unwrap_or("8080".to_owned())
@@ -36,7 +38,10 @@ async fn main() -> std::io::Result<()> {
 
     println!("Starting web server.");
 
-    let app_data_var = app_data::AppData { data_path };
+    let app_data_var = app_data::AppData {
+        data_path,
+        input_path,
+    };
 
     HttpServer::new(move || {
         let bearer_middleware = HttpAuthentication::bearer(jwt_validator);
@@ -52,7 +57,8 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/api")
                     .wrap(bearer_middleware)
-                    .service(save_image),
+                    .service(save_image)
+                    .service(get_image),
                 // .configure(user_info_config)
                 // .configure(user_file_config)
                 // .configure(bucket_config),

@@ -1,6 +1,7 @@
 use rand::{distributions::Alphanumeric, Rng};
 use sha2::{Digest, Sha256};
 
+pub mod encryption;
 pub mod file_utilities;
 pub mod jwt_token;
 

@@ -1,4 +1,5 @@
 use ::serde::Serialize;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,10 @@ pub fn _get_file_type(file_path: &str) -> String {
 
 pub fn get_file_type_from_mime(mime: &str) -> String {
     (mime.split('/').collect::<Vec<&str>>()[1]).to_owned()
+}
+
+pub fn op_osstr_to_str(ostr: Option<&OsStr>) -> String {
+    ostr.unwrap().to_str().unwrap().to_owned()
 }
 
 pub fn create_file_write_all(file_path: &Path, content: &[u8]) {
