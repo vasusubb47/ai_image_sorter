@@ -13,7 +13,7 @@ use std::{io, str};
 fn get_valid_key(key: &str) -> Vec<u8> {
     let mut bytes = key.as_bytes().to_vec();
     if bytes.len() < 16 {
-        for j in 0..(16 - bytes.len()) {
+        for _ in 0..(16 - bytes.len()) {
             bytes.push(0x00);
         }
     } else if bytes.len() > 16 {
@@ -26,7 +26,7 @@ fn get_valid_key(key: &str) -> Vec<u8> {
 /// Creates an initial vector (iv). This is also called a nonce
 fn get_iv(size: usize) -> Vec<u8> {
     let mut iv = vec![];
-    for j in 0..size {
+    for _ in 0..size {
         let r = rand::random();
         iv.push(r);
     }

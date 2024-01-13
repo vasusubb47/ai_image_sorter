@@ -1,17 +1,15 @@
 use ::serde::{Deserialize, Serialize};
 use chrono::{NaiveDateTime, Utc};
-use futures_util::Stream;
-use image::{open as openImage, GenericImage, GenericImageView, ImageBuffer};
+use image::open as openImage;
 use std::io::Read;
 use std::{fs::File, path::PathBuf};
 use uuid::Uuid;
 
-use crate::controlers::image_data;
 use crate::utility::encryption::{decrypt_bytes, encrypt_bytes};
 use crate::utility::file_utilities::{create_file_write_all, object_to_byte_vec, op_osstr_to_str};
 use crate::utility::genarate_salt;
 
-use super::project_info::{self, ProjectInfo};
+use super::project_info::ProjectInfo;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImageData {
@@ -41,6 +39,7 @@ pub struct UploadImage {
     pub image_path: String,
     pub image_name: Option<String>,
     pub image_tags: String,
+    pub encrypt: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +50,7 @@ struct TempImage {
     pub temp_image_mime: String,
     pub image_name: String,
     pub image_tags: Vec<String>,
+    pub encrypt: bool,
 }
 
 #[derive(Debug)]
@@ -62,7 +62,7 @@ pub enum ImageDataError {
 }
 
 impl ImageData {
-    fn new(temp_image: TempImage, is_encrypted: bool) -> Self {
+    fn new(temp_image: TempImage) -> Self {
         ImageData {
             image_id: Uuid::new_v4(),
             image_name: temp_image.image_name,
@@ -70,7 +70,7 @@ impl ImageData {
             original_image_name: temp_image.temp_image_name,
             image_size: temp_image.temp_file_size,
             created_date: Utc::now().naive_utc(),
-            is_encrypted,
+            is_encrypted: temp_image.encrypt,
             tags: temp_image.image_tags,
         }
     }
@@ -89,6 +89,7 @@ impl TempImage {
         TempImage {
             temp_file_path: temp_img_path.to_str().unwrap().to_owned(),
             temp_file_size: temp_img_metadata.len(),
+            encrypt: upload_image.encrypt,
             temp_image_name: op_osstr_to_str(temp_img_path.file_name()),
             temp_image_mime: op_osstr_to_str(temp_img_path.extension()),
             image_name: upload_image.image_name.unwrap_or(genarate_salt(7)),
@@ -125,7 +126,7 @@ pub async fn upload_image(
     let temp_img = TempImage::from_upload_image(temp_img, image_path);
     let temp_path = temp_img.temp_file_path.to_owned();
     println!("{:#?}", temp_img);
-    let img_data = ImageData::new(temp_img, true);
+    let img_data = ImageData::new(temp_img);
     println!("{:#?}", img_data);
 
     let image_path = PathBuf::from(format!(
@@ -282,14 +283,18 @@ async fn get_project_info(
 }
 
 async fn save_temp_image(temp_path: String, image_path: String, encryption_key: Option<String>) {
-    let temp_img = openImage(temp_path).unwrap().into_rgb8();
-
     match encryption_key {
         Some(encryption_key) => {
-            let encrypted_image = encrypt_bytes(temp_img.into_vec(), &encryption_key);
+            let mut file = File::open(temp_path).unwrap();
+            let mut buffer: Vec<u8> = Vec::new();
+            let err = file.read_to_end(&mut buffer);
+            println!("{:#?}", err);
+
+            let encrypted_image = encrypt_bytes(buffer, &encryption_key);
             create_file_write_all(&PathBuf::from(&image_path), &encrypted_image);
         }
         None => {
+            let temp_img = openImage(temp_path).unwrap().into_rgb8();
             let _ = temp_img.save(image_path.to_owned());
         }
     }

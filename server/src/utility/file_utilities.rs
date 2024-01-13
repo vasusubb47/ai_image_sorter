@@ -10,7 +10,7 @@ pub fn _get_file_type(file_path: &str) -> String {
     ext.to_str().unwrap().to_owned()
 }
 
-pub fn get_file_type_from_mime(mime: &str) -> String {
+pub fn _get_file_type_from_mime(mime: &str) -> String {
     (mime.split('/').collect::<Vec<&str>>()[1]).to_owned()
 }
 

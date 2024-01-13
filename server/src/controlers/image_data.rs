@@ -1,11 +1,8 @@
-use std::fmt::format;
-
 use actix_web::{
-    delete, get, post,
+    get, post,
     web::{self, ReqData},
     HttpResponse, Responder,
 };
-use serde_json::json;
 
 use crate::{app_data::AppData, models::image_data::*, utility::jwt_token::Claims};
 
@@ -55,13 +52,13 @@ pub async fn get_image(
     data: web::Data<AppData>,
     req_user: Option<ReqData<Claims>>,
     image_req: web::Json<ReqImageData>,
-) -> impl Responder {
+) -> HttpResponse {
     let project_id = req_user.unwrap().project_id;
 
     let project_images = get_saved_image(&data.data_path, &project_id, &image_req.0.image_id).await;
 
     match project_images {
-        Ok(images) => HttpResponse::Ok().json(json!(images)),
+        Ok(images) => HttpResponse::Ok().body(images.data),
         Err(err) => HttpResponse::NotFound().body(format!("{:?}", err)),
     }
 }
