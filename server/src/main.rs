@@ -57,8 +57,7 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::scope("/api")
                     .wrap(bearer_middleware)
-                    .service(save_image)
-                    .service(get_image),
+                    .configure(image_routes),
                 // .configure(user_info_config)
                 // .configure(user_file_config)
                 // .configure(bucket_config),

@@ -6,6 +6,15 @@ use actix_web::{
 
 use crate::{app_data::AppData, models::image_data::*, utility::jwt_token::Claims};
 
+pub fn image_routes(config: &mut web::ServiceConfig) {
+    let scope = web::scope("")
+        .service(save_image)
+        .service(get_image)
+        .service(get_project_info);
+
+    config.service(scope);
+}
+
 #[post("/save")]
 pub async fn save_image(
     data: web::Data<AppData>,
@@ -61,4 +70,14 @@ pub async fn get_image(
         Ok(images) => HttpResponse::Ok().body(images.data),
         Err(err) => HttpResponse::NotFound().body(format!("{:?}", err)),
     }
+}
+
+#[get("/info")]
+pub async fn get_project_info(
+    data: web::Data<AppData>,
+    req_user: Option<ReqData<Claims>>,
+) -> HttpResponse {
+    let project_id = req_user.unwrap().project_id;
+
+    HttpResponse::Ok().body("")
 }
